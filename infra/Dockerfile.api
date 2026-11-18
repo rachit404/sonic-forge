@@ -1,0 +1,23 @@
+# Dockerfile.api — SonicForge Backend
+# Full implementation in Step 9.
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system deps
+RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+
+# Copy and install Python deps
+COPY apps/api/pyproject.toml .
+RUN uv sync --no-dev
+
+# Copy application
+COPY apps/api/ .
+
+EXPOSE 8000
+
+CMD ["uv", "run", "uvicorn", "sonicforge.main:app", "--host", "0.0.0.0", "--port", "8000"]

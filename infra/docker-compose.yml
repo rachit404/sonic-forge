@@ -1,0 +1,58 @@
+# Docker Compose — SonicForge
+# Full containerization implemented in Step 9.
+# This file is a placeholder with the planned service layout.
+
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  api:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../apps/api/.env
+    volumes:
+      - projects_data:/projects
+      - models_cache:/models
+    depends_on:
+      - redis
+
+  worker:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.api
+    command: celery -A sonicforge.jobs.celery_app worker --loglevel=info --concurrency=1
+    restart: unless-stopped
+    env_file:
+      - ../apps/api/.env
+    volumes:
+      - projects_data:/projects
+      - models_cache:/models
+    depends_on:
+      - redis
+
+  web:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.web
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+volumes:
+  redis_data:
+  projects_data:
+  models_cache:
