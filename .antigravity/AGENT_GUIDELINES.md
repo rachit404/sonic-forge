@@ -22,7 +22,21 @@ Every agent that touches this codebase **must** read this file before making any
 6. **Never start writing code before Step 1 is complete and approved.**
 7. **Always update the relevant MD files** after meaningful changes.
 8. **Always prefer non-destructive audio editing.**
-9. **Always keep main branch stable.** Use feature branches for milestones.
+9. **Always keep main branch stable.** Use feature branches or clean milestone commits.
+
+---
+
+## 🪢 The Ponytail Principle (Lazy Senior Developer Philosophy)
+
+Always evaluate solutions using the **Ponytail 7-rung decision ladder**:
+1. **Does this need to exist at all?** (Strict YAGNI — avoid speculative abstractions)
+2. **Is it already in the codebase?** (Reuse existing components, stores, utilities)
+3. **Does the standard library do it?** (Use built-ins before adding dependencies)
+4. **Is there a native platform / Web Audio feature?** (e.g. native AudioContext, Canvas, Web Audio API)
+5. **Is it available in an already-installed dependency?** (e.g. Tone.js, WaveSurfer, pydub)
+6. **Can it be done cleanly and directly?** (Simple, readable, focused implementation)
+7. **Write the strict minimum that works reliably**: Never write boilerplate wrappers or complex layers for simple tasks. Always protect security, error handling, trust boundaries, and data integrity.
+
 
 ---
 
@@ -33,7 +47,7 @@ Every agent that touches this codebase **must** read this file before making any
 | 1    | Product Discovery & Requirements  | ✅ Done     |
 | 2    | Architecture & Tech Selection     | ✅ Done     |
 | 3    | Project Foundation                | ✅ Done     |
-| 4    | Audio Engine                      | ⏳ Pending  |
+| 4    | Audio Engine                      | ✅ Done     |
 | 5    | Music Workspace                   | ⏳ Pending  |
 | 6    | AI Model Integration              | ⏳ Pending  |
 | 7    | AI Music Generation               | ⏳ Pending  |

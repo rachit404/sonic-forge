@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react'
-import { Sparkles, Loader2, CheckCircle, XCircle, Clock } from 'lucide-react'
+import { Sparkles, Loader2, CheckCircle, XCircle, Clock, Plus } from 'lucide-react'
 import { useGenerationStore } from '@/stores/generationStore'
-import { generationApi } from '@/services/api'
-import type { GenerationJob, Provider } from '@/types'
+import { useProjectStore } from '@/stores/projectStore'
+import { generationApi, audioApi } from '@/services/api'
+import type { GenerationJob, Provider, Clip } from '@/types'
 
 export function GenerationPanel({ projectId }: { projectId: string }) {
-  const { jobs, providers, addJob, updateJob, setProviders, selectedProviderId, setSelectedProvider } =
+  const { jobs, providers, addJob, setProviders, selectedProviderId, setSelectedProvider } =
     useGenerationStore()
+  const { activeProject, addClipToTrack } = useProjectStore()
   const [prompt, setPrompt] = useState('')
   const [duration, setDuration] = useState(10)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -43,6 +45,36 @@ export function GenerationPanel({ projectId }: { projectId: string }) {
     }
   }
 
+  const handleAddToTimeline = async (job: GenerationJob) => {
+    if (!job.resultPath || !activeProject || activeProject.tracks.length === 0) return
+    const targetTrack = activeProject.tracks[0]
+
+    let peaks: number[] = []
+    try {
+      const waveformRes = await audioApi.getWaveform(projectId, job.resultPath)
+      peaks = waveformRes.data.peaks || []
+    } catch {
+      // fallback to empty peaks
+    }
+
+    const durationBeats = Math.max(1, Math.round(10 * (activeProject.bpm / 60)))
+    const newClip: Clip = {
+      id: crypto.randomUUID(),
+      name: job.prompt.slice(0, 24),
+      assetPath: job.resultPath,
+      startBeat: 0,
+      durationBeats: durationBeats,
+      trimStart: 0,
+      trimEnd: 0,
+      fadeIn: 0,
+      fadeOut: 0,
+      volume: 1.0,
+      peaks: peaks,
+    }
+
+    addClipToTrack(targetTrack.id, newClip)
+  }
+
   return (
     <div className="h-full flex flex-col bg-surface p-6 overflow-y-auto">
       <h2 className="text-lg font-semibold text-white mb-6 flex items-center gap-2">
@@ -50,7 +82,7 @@ export function GenerationPanel({ projectId }: { projectId: string }) {
         AI Music Generation
       </h2>
 
-      <div className="bg-surface-raised rounded-xl p-4 mb-4">
+      <div className="bg-surface-raised rounded-xl p-4 mb-4 border border-white/5 shadow-md">
         <label className="block text-sm text-gray-400 mb-2">Describe your music</label>
         <textarea
           value={prompt}
@@ -94,7 +126,7 @@ export function GenerationPanel({ projectId }: { projectId: string }) {
           <button
             onClick={handleGenerate}
             disabled={isSubmitting || !prompt.trim() || !selectedProviderId}
-            className="flex items-center gap-2 bg-accent hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            className="flex items-center gap-2 bg-accent hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-md"
           >
             {isSubmitting ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
             Generate
@@ -113,7 +145,11 @@ export function GenerationPanel({ projectId }: { projectId: string }) {
           <h3 className="text-sm font-medium text-gray-400 mb-3">Generation Queue</h3>
           <div className="space-y-2">
             {jobs.map((job) => (
-              <JobCard key={job.id} job={job} />
+              <JobCard
+                key={job.id}
+                job={job}
+                onAddToTimeline={() => handleAddToTimeline(job)}
+              />
             ))}
           </div>
         </div>
@@ -122,7 +158,13 @@ export function GenerationPanel({ projectId }: { projectId: string }) {
   )
 }
 
-function JobCard({ job }: { job: GenerationJob }) {
+function JobCard({
+  job,
+  onAddToTimeline,
+}: {
+  job: GenerationJob
+  onAddToTimeline: () => void
+}) {
   const icon = {
     queued: <Clock size={14} className="text-gray-400" />,
     running: <Loader2 size={14} className="animate-spin text-accent" />,
@@ -131,7 +173,7 @@ function JobCard({ job }: { job: GenerationJob }) {
   }[job.status]
 
   return (
-    <div className="bg-surface-raised rounded-lg p-3 flex items-start gap-3">
+    <div className="bg-surface-raised rounded-lg p-3 flex items-start gap-3 border border-white/5">
       <div className="mt-0.5">{icon}</div>
       <div className="flex-1 min-w-0">
         <p className="text-sm text-white truncate">{job.prompt}</p>
@@ -146,6 +188,16 @@ function JobCard({ job }: { job: GenerationJob }) {
         )}
         {job.error && <p className="text-xs text-red-400 mt-1">{job.error}</p>}
       </div>
+
+      {job.status === 'done' && (
+        <button
+          onClick={onAddToTimeline}
+          className="flex items-center gap-1 text-xs bg-surface-overlay hover:bg-accent/20 text-accent border border-accent/30 rounded px-2.5 py-1.5 transition-colors shrink-0"
+        >
+          <Plus size={12} />
+          Add to Track
+        </button>
+      )}
     </div>
   )
 }
