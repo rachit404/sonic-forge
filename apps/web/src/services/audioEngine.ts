@@ -3,7 +3,7 @@
  * Follows the Ponytail principle: concise, direct, resilient, no bloated abstractions.
  */
 import * as Tone from 'tone'
-import type { Project, Track, Clip } from '@/types'
+import type { Project, Track } from '@/types'
 import { usePlaybackStore } from '@/stores/playbackStore'
 
 interface TrackNode {

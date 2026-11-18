@@ -87,7 +87,6 @@ function TrackChannel({
           max="1"
           step="0.01"
           value={track.volume}
-          orient="vertical"
           onChange={(e) => onVolumeChange(parseFloat(e.target.value))}
           className="h-28 accent-accent cursor-pointer"
           style={{ writingMode: 'vertical-lr', direction: 'rtl' }}

@@ -1,18 +1,68 @@
-import { useRef } from 'react'
-import { Plus, Upload, ZoomIn, ZoomOut } from 'lucide-react'
+import { useState, useRef, useEffect } from 'react'
+import { Plus, Upload, ZoomIn, ZoomOut, Trash2, Magnet } from 'lucide-react'
 import { useProjectStore } from '@/stores/projectStore'
 import { usePlaybackStore } from '@/stores/playbackStore'
 import { useUIStore } from '@/stores/uiStore'
 import { audioApi, tracksApi } from '@/services/api'
 import { audioEngine } from '@/services/audioEngine'
-import { WaveformDisplay } from '@/components/waveform/WaveformDisplay'
+import { snapBeat, type SnapValue, pxToBeat } from '@/utils/grid'
+import { ClipBlock } from '@/components/timeline/ClipBlock'
 import type { Track, Clip } from '@/types'
 
+const SNAP_OPTIONS: { label: string; value: SnapValue }[] = [
+  { label: '1 Bar (4b)', value: 'bar' },
+  { label: '1/1 Beat', value: '1' },
+  { label: '1/2 Beat', value: '1/2' },
+  { label: '1/4 Beat', value: '1/4' },
+  { label: 'Snap Off', value: 'off' },
+]
+
 export function Timeline() {
-  const { activeProject, setActiveProject, addClipToTrack } = useProjectStore()
+  const {
+    activeProject,
+    setActiveProject,
+    addClipToTrack,
+    deleteTrack,
+    selectedClipId,
+    removeClip,
+    duplicateClip,
+    splitClip,
+  } = useProjectStore()
   const { timelineZoom, setTimelineZoom } = useUIStore()
   const { currentBeat } = usePlaybackStore()
+  const [snap, setSnap] = useState<SnapValue>('1')
   const timelineRef = useRef<HTMLDivElement | null>(null)
+
+  // Keyboard shortcuts: Delete, Duplicate (Ctrl+D), Split (S)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') {
+        return
+      }
+
+      if (!activeProject || !selectedClipId) return
+
+      // Find which track holds the selected clip
+      const track = activeProject.tracks.find((t) =>
+        t.clips.some((c) => c.id === selectedClipId),
+      )
+      if (!track) return
+
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault()
+        removeClip(track.id, selectedClipId)
+      } else if (e.key === 'd' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault()
+        duplicateClip(track.id, selectedClipId)
+      } else if (e.key === 's' || e.key === 'S') {
+        e.preventDefault()
+        splitClip(track.id, selectedClipId, currentBeat)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [activeProject, selectedClipId, currentBeat, removeClip, duplicateClip, splitClip])
 
   if (!activeProject) {
     return (
@@ -41,8 +91,9 @@ export function Timeline() {
     if (!timelineRef.current) return
     const rect = timelineRef.current.getBoundingClientRect()
     const clickX = e.clientX - rect.left
-    const beat = Math.max(0, clickX / timelineZoom)
-    audioEngine.seek(beat)
+    const rawBeat = pxToBeat(clickX, timelineZoom)
+    const finalBeat = snapBeat(rawBeat, snap)
+    audioEngine.seek(finalBeat)
   }
 
   const playheadX = currentBeat * timelineZoom
@@ -51,13 +102,32 @@ export function Timeline() {
     <div className="flex flex-col h-full bg-surface overflow-hidden select-none">
       {/* Timeline Toolbar */}
       <div className="h-10 bg-surface-raised border-b border-white/5 flex items-center px-4 justify-between shrink-0">
-        <button
-          onClick={handleAddTrack}
-          className="flex items-center gap-1.5 text-xs bg-surface-overlay hover:bg-white/10 text-white px-2.5 py-1.5 rounded transition-colors"
-        >
-          <Plus size={14} />
-          Add Track
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleAddTrack}
+            className="flex items-center gap-1.5 text-xs bg-surface-overlay hover:bg-white/10 text-white px-2.5 py-1.5 rounded transition-colors shadow-sm"
+          >
+            <Plus size={14} />
+            Add Track
+          </button>
+
+          {/* Snap Selector */}
+          <div className="flex items-center gap-1.5 text-xs text-gray-400 border-l border-white/10 pl-3">
+            <Magnet size={13} className={snap !== 'off' ? 'text-accent' : 'text-gray-500'} />
+            <span>Snap:</span>
+            <select
+              value={snap}
+              onChange={(e) => setSnap(e.target.value as SnapValue)}
+              className="bg-surface border border-white/10 text-white rounded px-2 py-0.5 text-xs focus:outline-none focus:border-accent"
+            >
+              {SNAP_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
 
         {/* Zoom Controls */}
         <div className="flex items-center gap-1">
@@ -100,14 +170,16 @@ export function Timeline() {
             </button>
           </div>
         ) : (
-          <div className="relative">
+          <div ref={timelineRef} className="relative">
             {activeProject.tracks.map((track) => (
               <TrackRow
                 key={track.id}
                 projectId={activeProject.id}
                 track={track}
                 zoom={timelineZoom}
+                snap={snap}
                 onAddClip={(clip) => addClipToTrack(track.id, clip)}
+                onDeleteTrack={() => deleteTrack(track.id)}
               />
             ))}
 
@@ -116,7 +188,7 @@ export function Timeline() {
               className="absolute top-0 bottom-0 pointer-events-none z-30"
               style={{ left: `calc(12rem + ${playheadX}px)` }}
             >
-              <div className="w-0.5 h-full bg-accent" />
+              <div className="w-0.5 h-full bg-accent shadow-sm" />
             </div>
           </div>
         )}
@@ -138,7 +210,7 @@ function TimelineRuler({
 
   return (
     <div className="h-8 bg-surface-raised border-b border-white/5 flex items-center overflow-x-hidden shrink-0 relative">
-      <div className="w-48 shrink-0 border-r border-white/5 px-3 flex items-center text-xs text-gray-500 font-mono">
+      <div className="w-48 shrink-0 border-r border-white/5 px-3 flex items-center text-[11px] text-gray-500 font-mono">
         TRACKS
       </div>
 
@@ -172,12 +244,16 @@ function TrackRow({
   projectId,
   track,
   zoom,
+  snap,
   onAddClip,
+  onDeleteTrack,
 }: {
   projectId: string
   track: Track
   zoom: number
+  snap: SnapValue
   onAddClip: (clip: Clip) => void
+  onDeleteTrack: () => void
 }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -219,17 +295,27 @@ function TrackRow({
     <div className="flex border-b border-white/5 h-24 group">
       {/* Track Info Header */}
       <div className="w-48 shrink-0 bg-surface-raised border-r border-white/5 flex flex-col justify-between p-2.5">
-        <div className="flex items-center gap-2">
-          <div className="w-2.5 h-6 rounded-full shrink-0" style={{ backgroundColor: track.color }} />
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-white truncate">{track.name}</p>
-            <p className="text-[10px] text-gray-500">
-              {track.muted ? 'MUTED' : track.solo ? 'SOLO' : `${Math.round(track.volume * 100)}%`}
-            </p>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-2.5 h-6 rounded-full shrink-0" style={{ backgroundColor: track.color }} />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-white truncate">{track.name}</p>
+              <p className="text-[10px] text-gray-500">
+                {track.muted ? 'MUTED' : track.solo ? 'SOLO' : `${Math.round(track.volume * 100)}%`}
+              </p>
+            </div>
           </div>
+
+          <button
+            onClick={onDeleteTrack}
+            className="opacity-0 group-hover:opacity-100 p-1 text-gray-500 hover:text-red-400 hover:bg-white/5 rounded transition-all"
+            title="Delete Track"
+          >
+            <Trash2 size={13} />
+          </button>
         </div>
 
-        {/* Audio import button */}
+        {/* Audio Import Button */}
         <div>
           <input
             ref={fileInputRef}
@@ -251,48 +337,15 @@ function TrackRow({
       {/* Clip Placement Area */}
       <div className="flex-1 relative bg-surface overflow-x-hidden">
         {track.clips.map((clip) => (
-          <ClipBlock key={clip.id} clip={clip} zoom={zoom} trackColor={track.color} />
+          <ClipBlock
+            key={clip.id}
+            clip={clip}
+            trackId={track.id}
+            trackColor={track.color}
+            zoom={zoom}
+            snap={snap}
+          />
         ))}
-      </div>
-    </div>
-  )
-}
-
-function ClipBlock({
-  clip,
-  zoom,
-  trackColor,
-}: {
-  clip: Clip
-  zoom: number
-  trackColor: string
-}) {
-  return (
-    <div
-      className="absolute top-2 bottom-2 rounded overflow-hidden flex flex-col justify-between border cursor-pointer hover:brightness-110 transition-all shadow-md group/clip"
-      style={{
-        left: clip.startBeat * zoom,
-        width: Math.max(40, clip.durationBeats * zoom),
-        backgroundColor: `${trackColor}22`,
-        borderColor: trackColor,
-      }}
-    >
-      {/* Clip Header */}
-      <div
-        className="px-2 py-0.5 text-[11px] font-medium text-white truncate flex items-center justify-between"
-        style={{ backgroundColor: `${trackColor}66` }}
-      >
-        <span className="truncate">{clip.name ?? 'Audio Clip'}</span>
-        <span className="text-[9px] opacity-75">{clip.durationBeats}b</span>
-      </div>
-
-      {/* Waveform Renderer */}
-      <div className="flex-1 px-1 flex items-center">
-        <WaveformDisplay
-          peaks={clip.peaks}
-          color={trackColor}
-          height={32}
-        />
       </div>
     </div>
   )
