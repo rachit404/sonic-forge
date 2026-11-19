@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import type { Project, Track, Clip } from '@/types'
+import { tracksApi } from '@/services/api'
 
 interface ProjectState {
   projects: Project[]
@@ -29,6 +30,14 @@ interface ProjectState {
   setError: (error: string | null) => void
 }
 
+/** Helper to persist updated clips of a track to the backend */
+function syncTrackClips(projectId: string | undefined, trackId: string, clips: Clip[]) {
+  if (!projectId) return
+  tracksApi.update(projectId, trackId, { clips }).catch((err) => {
+    console.warn(`Failed to auto-save clips for track ${trackId}:`, err)
+  })
+}
+
 export const useProjectStore = create<ProjectState>()(
   devtools(
     (set) => ({
@@ -45,6 +54,9 @@ export const useProjectStore = create<ProjectState>()(
       updateTrack: (trackId, updates) =>
         set((state) => {
           if (!state.activeProject) return state
+          const projectId = state.activeProject.id
+          tracksApi.update(projectId, trackId, updates).catch(() => {})
+
           return {
             activeProject: {
               ...state.activeProject,
@@ -58,6 +70,9 @@ export const useProjectStore = create<ProjectState>()(
       deleteTrack: (trackId) =>
         set((state) => {
           if (!state.activeProject) return state
+          const projectId = state.activeProject.id
+          tracksApi.delete(projectId, trackId).catch(() => {})
+
           return {
             activeProject: {
               ...state.activeProject,
@@ -69,11 +84,15 @@ export const useProjectStore = create<ProjectState>()(
       addClipToTrack: (trackId, clip) =>
         set((state) => {
           if (!state.activeProject) return state
+          const track = state.activeProject.tracks.find((t) => t.id === trackId)
+          const updatedClips = track ? [...track.clips, clip] : [clip]
+          syncTrackClips(state.activeProject.id, trackId, updatedClips)
+
           return {
             activeProject: {
               ...state.activeProject,
               tracks: state.activeProject.tracks.map((t) =>
-                t.id === trackId ? { ...t, clips: [...t.clips, clip] } : t,
+                t.id === trackId ? { ...t, clips: updatedClips } : t,
               ),
             },
           }
@@ -82,14 +101,16 @@ export const useProjectStore = create<ProjectState>()(
       removeClip: (trackId, clipId) =>
         set((state) => {
           if (!state.activeProject) return state
+          const track = state.activeProject.tracks.find((t) => t.id === trackId)
+          const updatedClips = track ? track.clips.filter((c) => c.id !== clipId) : []
+          syncTrackClips(state.activeProject.id, trackId, updatedClips)
+
           return {
             selectedClipId: state.selectedClipId === clipId ? null : state.selectedClipId,
             activeProject: {
               ...state.activeProject,
               tracks: state.activeProject.tracks.map((t) =>
-                t.id === trackId
-                  ? { ...t, clips: t.clips.filter((c) => c.id !== clipId) }
-                  : t,
+                t.id === trackId ? { ...t, clips: updatedClips } : t,
               ),
             },
           }
@@ -98,18 +119,18 @@ export const useProjectStore = create<ProjectState>()(
       updateClip: (trackId, clipId, updates) =>
         set((state) => {
           if (!state.activeProject) return state
+          const track = state.activeProject.tracks.find((t) => t.id === trackId)
+          if (!track) return state
+          const updatedClips = track.clips.map((c) =>
+            c.id === clipId ? { ...c, ...updates } : c,
+          )
+          syncTrackClips(state.activeProject.id, trackId, updatedClips)
+
           return {
             activeProject: {
               ...state.activeProject,
               tracks: state.activeProject.tracks.map((t) =>
-                t.id === trackId
-                  ? {
-                      ...t,
-                      clips: t.clips.map((c) =>
-                        c.id === clipId ? { ...c, ...updates } : c,
-                      ),
-                    }
-                  : t,
+                t.id === trackId ? { ...t, clips: updatedClips } : t,
               ),
             },
           }
@@ -125,31 +146,36 @@ export const useProjectStore = create<ProjectState>()(
           const updatedClip = { ...targetClip, startBeat: Math.max(0, newStartBeat) }
 
           if (fromTrackId === toTrackId) {
+            const updatedClips = fromTrack ? fromTrack.clips.map((c) => (c.id === clipId ? updatedClip : c)) : []
+            syncTrackClips(state.activeProject.id, fromTrackId, updatedClips)
+
             return {
               activeProject: {
                 ...state.activeProject,
                 tracks: state.activeProject.tracks.map((t) =>
-                  t.id === fromTrackId
-                    ? {
-                        ...t,
-                        clips: t.clips.map((c) => (c.id === clipId ? updatedClip : c)),
-                      }
-                    : t,
+                  t.id === fromTrackId ? { ...t, clips: updatedClips } : t,
                 ),
               },
             }
           }
 
           // Move to a different track
+          const fromUpdatedClips = fromTrack ? fromTrack.clips.filter((c) => c.id !== clipId) : []
+          const toTrack = state.activeProject.tracks.find((t) => t.id === toTrackId)
+          const toUpdatedClips = toTrack ? [...toTrack.clips, updatedClip] : [updatedClip]
+
+          syncTrackClips(state.activeProject.id, fromTrackId, fromUpdatedClips)
+          syncTrackClips(state.activeProject.id, toTrackId, toUpdatedClips)
+
           return {
             activeProject: {
               ...state.activeProject,
               tracks: state.activeProject.tracks.map((t) => {
                 if (t.id === fromTrackId) {
-                  return { ...t, clips: t.clips.filter((c) => c.id !== clipId) }
+                  return { ...t, clips: fromUpdatedClips }
                 }
                 if (t.id === toTrackId) {
-                  return { ...t, clips: [...t.clips, updatedClip] }
+                  return { ...t, clips: toUpdatedClips }
                 }
                 return t
               }),
@@ -164,6 +190,8 @@ export const useProjectStore = create<ProjectState>()(
           const clip = track?.clips.find((c) => c.id === clipId)
           if (!clip) return state
 
+          if (!track) return state
+
           const duplicated: Clip = {
             ...clip,
             id: crypto.randomUUID(),
@@ -171,12 +199,15 @@ export const useProjectStore = create<ProjectState>()(
             startBeat: clip.startBeat + clip.durationBeats,
           }
 
+          const updatedClips = [...track.clips, duplicated]
+          syncTrackClips(state.activeProject.id, trackId, updatedClips)
+
           return {
             selectedClipId: duplicated.id,
             activeProject: {
               ...state.activeProject,
               tracks: state.activeProject.tracks.map((t) =>
-                t.id === trackId ? { ...t, clips: [...t.clips, duplicated] } : t,
+                t.id === trackId ? { ...t, clips: updatedClips } : t,
               ),
             },
           }
@@ -189,7 +220,6 @@ export const useProjectStore = create<ProjectState>()(
           const clip = track?.clips.find((c) => c.id === clipId)
           if (!clip) return state
 
-          // Verify splitBeat is inside clip boundaries
           const clipEndBeat = clip.startBeat + clip.durationBeats
           if (splitBeat <= clip.startBeat + 0.1 || splitBeat >= clipEndBeat - 0.1) {
             return state
@@ -216,17 +246,20 @@ export const useProjectStore = create<ProjectState>()(
             trimStart: (clip.trimStart || 0) + offsetSeconds,
           }
 
+          if (!track) return state
+
+          const updatedClips = track.clips
+            .map((c) => (c.id === clipId ? firstClip : c))
+            .concat(secondClip)
+
+          syncTrackClips(state.activeProject.id, trackId, updatedClips)
+
           return {
             selectedClipId: secondClip.id,
             activeProject: {
               ...state.activeProject,
               tracks: state.activeProject.tracks.map((t) =>
-                t.id === trackId
-                  ? {
-                      ...t,
-                      clips: t.clips.map((c) => (c.id === clipId ? firstClip : c)).concat(secondClip),
-                    }
-                  : t,
+                t.id === trackId ? { ...t, clips: updatedClips } : t,
               ),
             },
           }
